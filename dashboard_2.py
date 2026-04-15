@@ -10,9 +10,9 @@ from flask import Flask, render_template_string, jsonify
 
 app = Flask(__name__)
 
-# ──────────────────────────────────────────────
+# ─────────────────────────────
 # STATE
-# ──────────────────────────────────────────────
+# ─────────────────────────────
 state_lock = threading.Lock()
 
 nodes = {}
@@ -24,15 +24,14 @@ raw_log = deque(maxlen=60)
 serial1_connected = False
 serial2_connected = False
 
-# ──────────────────────────────────────────────
-# TIME
-# ──────────────────────────────────────────────
+
 def now_ts():
     return datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
 
-# ──────────────────────────────────────────────
-# SAFE INGEST
-# ──────────────────────────────────────────────
+
+# ─────────────────────────────
+# INGEST
+# ─────────────────────────────
 def ingest(packet):
     with state_lock:
         addr = packet['addr']
@@ -63,12 +62,12 @@ def ingest(packet):
 
         raw_log.appendleft(f"[{packet['ts']}] NODE={addr} RSSI={packet['rssi']}")
 
-# ──────────────────────────────────────────────
-# DEMO INJECTOR
-# ──────────────────────────────────────────────
+
+# ─────────────────────────────
+# DEMO DATA
+# ─────────────────────────────
 def demo_injector():
     print("[DEMO] Injector started")
-
     t = 0
 
     nodes_demo = {
@@ -79,10 +78,7 @@ def demo_injector():
         5: (34.0575, -117.8225),
     }
 
-    state = {
-        addr: {"pos": [lat, lon], "dir": [0.5, 0.5]}
-        for addr, (lat, lon) in nodes_demo.items()
-    }
+    state = {a: {"pos": [lat, lon], "dir": [0.5, 0.5]} for a, (lat, lon) in nodes_demo.items()}
 
     CENTER_LAT, CENTER_LON = 34.0564, -117.8216
 
@@ -106,10 +102,6 @@ def demo_injector():
             s["pos"] = [lat, lon]
             s["dir"] = [dx, dy]
 
-            ax = 0.3 * math.sin(t * 0.3)
-            ay = 0.3 * math.cos(t * 0.3)
-            az = 1.0
-
             packet = {
                 "addr": addr,
                 "ts": now_ts(),
@@ -119,9 +111,9 @@ def demo_injector():
                 "sat": 6,
                 "rssi": -60,
                 "snr": 10,
-                "ax": ax,
-                "ay": ay,
-                "az": az,
+                "ax": 0.2,
+                "ay": 0.1,
+                "az": 1.0,
                 "gx": 0,
                 "gy": 0,
                 "gz": 0,
@@ -132,23 +124,25 @@ def demo_injector():
         t += 1
         time.sleep(1)
 
-# ──────────────────────────────────────────────
-# START THREAD SAFELY (Render/Gunicorn safe)
-# ──────────────────────────────────────────────
+
+# ─────────────────────────────
+# START THREAD (Render safe)
+# ─────────────────────────────
 _started = False
 
-def start_demo_once():
+def start_demo():
     global _started
     if _started:
         return
     _started = True
     threading.Thread(target=demo_injector, daemon=True).start()
 
-start_demo_once()
+start_demo()
 
-# ──────────────────────────────────────────────
+
+# ─────────────────────────────
 # API
-# ──────────────────────────────────────────────
+# ─────────────────────────────
 @app.route('/api/state')
 def api_state():
     with state_lock:
@@ -181,15 +175,20 @@ def api_state():
             "raw_log": list(raw_log)[:20],
         })
 
-# ──────────────────────────────────────────────
+
+# ─────────────────────────────
 # YOUR HTML (UNCHANGED)
-# ──────────────────────────────────────────────
-HTML = r"""<YOUR FULL HTML EXACTLY AS YOU PROVIDED>"""
+# ─────────────────────────────
+HTML = r"""
+PASTE YOUR ORIGINAL HTML HERE EXACTLY (NO CHANGES AT ALL)
+"""
+
 
 @app.route('/')
 def index():
     return render_template_string(HTML)
 
-# ──────────────────────────────────────────────
-# GUNICORN ENTRY (DO NOT USE app.run on Render)
-# ──────────────────────────────────────────────
+
+# ─────────────────────────────
+# GUNICORN ENTRYPOINT
+# ─────────────────────────────
