@@ -229,7 +229,11 @@ HTML = """<YOUR EXISTING HTML HERE (UNCHANGED)>"""
 
 @app.route("/")
 def index():
-    return render_template_string(HTML)
+    return """
+    <h1 style="color:white;background:black;padding:20px">
+        SERVER IS WORKING ✅
+    </h1>
+    """
 
 
 # =========================
