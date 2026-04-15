@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import math
 import random
 import threading
@@ -10,27 +9,23 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template_string
 
 # =========================
-# APP SETUP
+# APP
 # =========================
 app = Flask(__name__)
 
 state_lock = threading.Lock()
 
-MAX_HISTORY = 200
-MAX_POSITIONS = 500
-
 nodes = {}
-imu_history = deque(maxlen=MAX_HISTORY)
-rssi_history = deque(maxlen=MAX_HISTORY)
-positions = deque(maxlen=MAX_POSITIONS)
-raw_log = deque(maxlen=60)
+imu_history = deque(maxlen=200)
+rssi_history = deque(maxlen=200)
+positions = deque(maxlen=500)
+raw_log = deque(maxlen=80)
 
-serial1_connected = False
-serial2_connected = False
+demo_started = False
 
 
 # =========================
-# HELPERS
+# TIME
 # =========================
 def now_ts():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -39,58 +34,56 @@ def now_ts():
 # =========================
 # SAFE INGEST
 # =========================
-def ingest(packet: dict):
-    if not packet:
+def ingest(pkt):
+    if not pkt:
         return
 
     with state_lock:
-        addr = packet.get("addr", 0)
-        ts = packet.get("ts", now_ts())
+        addr = pkt.get("addr", 0)
 
-        nodes[addr] = {**packet, "last_seen": time.time()}
+        nodes[addr] = {
+            **pkt,
+            "last_seen": time.time()
+        }
 
         imu_history.append({
-            "ts": ts,
-            "ax": packet.get("ax", 0),
-            "ay": packet.get("ay", 0),
-            "az": packet.get("az", 0),
-            "gx": packet.get("gx", 0),
-            "gy": packet.get("gy", 0),
-            "gz": packet.get("gz", 0),
-            "addr": addr,
+            "ts": pkt.get("ts", now_ts()),
+            "ax": pkt.get("ax", 0),
+            "ay": pkt.get("ay", 0),
+            "az": pkt.get("az", 0),
+            "gx": pkt.get("gx", 0),
+            "gy": pkt.get("gy", 0),
+            "gz": pkt.get("gz", 0),
+            "addr": addr
         })
 
         rssi_history.append({
-            "ts": ts,
-            "rssi": packet.get("rssi", -100),
-            "snr": packet.get("snr", 0),
-            "addr": addr,
+            "ts": pkt.get("ts", now_ts()),
+            "rssi": pkt.get("rssi", -100),
+            "snr": pkt.get("snr", 0),
+            "addr": addr
         })
 
-        lat = packet.get("lat")
-        lon = packet.get("lon")
-
-        if lat is not None and lon is not None:
+        if pkt.get("lat") is not None:
             positions.append({
-                "lat": lat,
-                "lon": lon,
-                "alt": packet.get("alt", 0),
-                "ts": ts,
-                "addr": addr,
+                "lat": pkt["lat"],
+                "lon": pkt["lon"],
+                "ts": pkt.get("ts", now_ts()),
+                "addr": addr
             })
 
-        raw_log.appendleft(f"[{ts}] NODE={addr} RSSI={packet.get('rssi',0)}")
+        raw_log.appendleft(f"[{now_ts()}] NODE {addr} RSSI {pkt.get('rssi',0)}")
 
 
 # =========================
-# DEMO INJECTOR (RELIABLE)
+# DEMO STREAM (ALWAYS RUNNING)
 # =========================
-def demo_injector():
-    print("[DEMO] Injector started")
+def demo_loop():
+    print("[DEMO] started")
 
     t = 0
 
-    nodes_demo = {
+    base_nodes = {
         1: (34.0564, -117.8216),
         2: (34.0580, -117.8210),
         3: (34.0568, -117.8235),
@@ -99,24 +92,22 @@ def demo_injector():
     }
 
     state = {
-        addr: {
+        a: {
             "pos": [lat, lon],
             "dir": [random.uniform(-1, 1), random.uniform(-1, 1)]
         }
-        for addr, (lat, lon) in nodes_demo.items()
+        for a, (lat, lon) in base_nodes.items()
     }
 
-    CENTER_LAT, CENTER_LON = 34.0564, -117.8216
-    BOUND = 0.0025
+    center = (34.0564, -117.8216)
 
     while True:
         for addr, s in state.items():
-
             lat, lon = s["pos"]
             dx, dy = s["dir"]
 
-            dx += random.uniform(-0.15, 0.15)
-            dy += random.uniform(-0.15, 0.15)
+            dx += random.uniform(-0.1, 0.1)
+            dy += random.uniform(-0.1, 0.1)
 
             mag = math.sqrt(dx * dx + dy * dy) + 1e-6
             dx, dy = dx / mag, dy / mag
@@ -126,62 +117,51 @@ def demo_injector():
             lat += dx * speed
             lon += dy * speed
 
-            lat += (CENTER_LAT - lat) * 0.0005
-            lon += (CENTER_LON - lon) * 0.0005
+            lat += (center[0] - lat) * 0.0005
+            lon += (center[1] - lon) * 0.0005
 
-            lat = max(min(lat, CENTER_LAT + BOUND), CENTER_LAT - BOUND)
-            lon = max(min(lon, CENTER_LON + BOUND), CENTER_LON - BOUND)
+            phase = t * 0.3 + addr
 
-            s["pos"] = [lat, lon]
-            s["dir"] = [dx, dy]
+            ax = math.sin(phase) * 0.3
+            ay = math.cos(phase) * 0.3
+            az = 1.0
 
-            phase = t * 0.35 + addr
+            dist = math.sqrt((lat-center[0])**2 + (lon-center[1])**2)
 
-            ax = 0.3 * math.sin(phase)
-            ay = 0.3 * math.cos(phase)
-            az = 1.0 + 0.1 * math.sin(phase * 2)
-
-            gx = 6 * math.sin(phase) + random.uniform(-0.8, 0.8)
-            gy = 6 * math.cos(phase) + random.uniform(-0.8, 0.8)
-            gz = 10 * math.sin(t * 0.1 + addr)
-
-            if random.random() < 0.03:
-                gz += random.uniform(25, 70)
-
-            dist = math.sqrt((lat - CENTER_LAT) ** 2 + (lon - CENTER_LON) ** 2)
-
-            rssi = -60 - int(dist * 5000)
-            snr = 25 - int(dist * 2000)
-
-            packet = {
+            pkt = {
                 "addr": addr,
                 "ts": now_ts(),
                 "lat": lat,
                 "lon": lon,
-                "alt": 180,
+                "alt": 120,
                 "sat": 6,
-                "rssi": rssi,
-                "snr": snr,
+                "rssi": -60 - int(dist * 5000),
+                "snr": 20 - int(dist * 2000),
                 "ax": ax,
                 "ay": ay,
                 "az": az,
-                "gx": gx,
-                "gy": gy,
-                "gz": gz,
+                "gx": random.uniform(-5, 5),
+                "gy": random.uniform(-5, 5),
+                "gz": random.uniform(-10, 10),
             }
 
-            ingest(packet)
+            ingest(pkt)
 
         t += 1
         time.sleep(1)
 
 
 # =========================
-# START DEMO AUTOMATICALLY (IMPORTANT FOR RENDER + GUNICORN)
+# START THREAD SAFELY (WORKS WITH GUNICORN)
 # =========================
 def start_background():
-    thread = threading.Thread(target=demo_injector, daemon=True)
-    thread.start()
+    global demo_started
+    if demo_started:
+        return
+    demo_started = True
+
+    t = threading.Thread(target=demo_loop, daemon=True)
+    t.start()
 
 
 start_background()
@@ -191,7 +171,7 @@ start_background()
 # API
 # =========================
 @app.route("/api/state")
-def api_state():
+def state():
     with state_lock:
         now = time.time()
 
@@ -204,40 +184,103 @@ def api_state():
                 "online": age < 60
             })
 
-        # ensure at least placeholders so UI NEVER shows empty forever
+        # IMPORTANT: never empty UI
         if not node_list:
-            node_list = [
-                {"addr": i, "online": False, "rssi": -120, "snr": 0,
-                 "lat": None, "lon": None, "sat": 0, "alt": 0,
-                 "ax": 0, "ay": 0, "az": 0}
-                for i in range(1, 6)
-            ]
+            node_list = [{
+                "addr": i,
+                "online": False,
+                "rssi": -120,
+                "snr": 0,
+                "lat": None,
+                "lon": None,
+                "sat": 0,
+                "alt": 0,
+                "ax": 0,
+                "ay": 0,
+                "az": 0
+            } for i in range(1, 6)]
 
         return jsonify({
             "nodes": node_list,
             "imu_history": list(imu_history)[-60:],
             "rssi_history": list(rssi_history)[-60:],
             "positions": list(positions),
-            "raw_log": list(raw_log)[:20],
+            "raw_log": list(raw_log)[:25]
         })
 
 
 # =========================
-# FRONTEND
+# FULL FRONTEND (RESTORED)
 # =========================
-HTML = """<YOUR EXISTING HTML HERE (UNCHANGED)>"""
+HTML = r"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>LoRa Dashboard</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+
+<style>
+body { margin:0; background:#050a0e; color:white; font-family:Arial; }
+#map { height:300px; }
+.panel { padding:10px; }
+.node { padding:8px; border-bottom:1px solid #222; }
+</style>
+</head>
+
+<body>
+
+<h2 class="panel">LoRa Dashboard (LIVE)</h2>
+
+<div id="nodes"></div>
+<div id="map"></div>
+
+<script>
+const map = L.map('map').setView([34.0564, -117.8216], 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+let markers = {};
+
+async function update(){
+  const res = await fetch('/api/state');
+  const d = await res.json();
+
+  document.getElementById("nodes").innerHTML =
+    d.nodes.map(n =>
+      `<div class="node">
+        NODE ${n.addr} | RSSI ${n.rssi} | ${n.online ? "ONLINE" : "OFFLINE"}
+      </div>`
+    ).join("");
+
+  d.positions.forEach(p => {
+    if(!markers[p.addr]){
+      markers[p.addr] = L.marker([p.lat, p.lon]).addTo(map);
+    } else {
+      markers[p.addr].setLatLng([p.lat, p.lon]);
+    }
+  });
+}
+
+setInterval(update, 1000);
+update();
+</script>
+
+</body>
+</html>
+"""
+
 
 @app.route("/")
-def index():
-    return """
-    <h1 style="color:white;background:black;padding:20px">
-        SERVER IS WORKING ✅
-    </h1>
-    """
+def home():
+    return render_template_string(HTML)
 
 
 # =========================
-# ENTRYPOINT
+# RUN (RENDER SAFE)
 # =========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
