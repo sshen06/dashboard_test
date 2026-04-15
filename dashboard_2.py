@@ -61,8 +61,14 @@ def ingest(packet):
                 'addr': addr,
             })
 
-        raw_log.appendleft(f"[{packet['ts']}] NODE={addr} RSSI={packet['rssi']}")
-
+        raw_log.appendleft(
+    		f"[{packet['ts']}] NODE={addr} "
+    		f"+RCV={addr},"
+    		f"{len(json.dumps(packet))},"
+    		f"{json.dumps(packet)},"
+    		f"{packet['rssi']},"
+    		f"{packet['snr']}"
+		)
 
 # ─────────────────────────────
 # DEMO DATA
