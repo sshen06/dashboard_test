@@ -91,20 +91,6 @@ def demo_injector():
             dx += random.uniform(-0.25, 0.25)
             dy += random.uniform(-0.25, 0.25)
 
-            mag = math.sqrt(dx*dx + dy*dy) + 1e-6
-            dx, dy = dx/mag, dy/mag
-            
-            speed = 0.00003 + (addr * 0.000002)
-            
-            lat += dx * speed
-            lon += dy * speed
-
-            lat += (CENTER_LAT - lat) * 0.0003
-            lon += (CENTER_LON - lon) * 0.0003
-
-            lat = max(min(lat, CENTER_LAT + BOUND), CENTER_LAT - BOUND)
-            lon = max(min(lon, CENTER_LON + BOUND), CENTER_LON - BOUND)
-
             s["pos"] = [lat, lon]
             s["dir"] = [dx, dy]
 
