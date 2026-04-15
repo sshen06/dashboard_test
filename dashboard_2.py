@@ -102,7 +102,7 @@ def demo_injector():
             lon += (CENTER_LON - lon) * 0.0003
 
             lat = max(min(lat, CENTER_LAT + BOUND), CENTER_LAT - BOUND)
-            lon = max(min(lon, CENTER_LAT + BOUND), CENTER_LON - BOUND)
+            lon = max(min(lon, CENTER_LON + BOUND), CENTER_LON - BOUND)
 
             s["pos"] = [lat, lon]
             s["dir"] = [dx, dy]
