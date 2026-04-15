@@ -68,6 +68,9 @@ def ingest(packet):
 # DEMO DATA
 # ─────────────────────────────
 def demo_injector():
+    import random
+    import math
+
     print("[DEMO] Injector started")
     t = 0
 
@@ -79,20 +82,59 @@ def demo_injector():
         5: (34.0575, -117.8225),
     }
 
-    state = {a: {"pos": [lat, lon], "dir": [0.5, 0.5]} for a, (lat, lon) in nodes_demo.items()}
+    # state: position + velocity (IMPORTANT for realism)
+    state = {
+        a: {
+            "pos": [lat, lon],
+            "vel": [random.uniform(-0.00001, 0.00001),
+                    random.uniform(-0.00001, 0.00001)]
+        }
+        for a, (lat, lon) in nodes_demo.items()
+    }
 
     CENTER_LAT, CENTER_LON = 34.0564, -117.8216
+    BOUND = 0.0025  # movement radius (~250m)
 
     while True:
         for addr, s in state.items():
+
             lat, lon = s["pos"]
-            dx, dy = s["dir"]
+            vx, vy = s["vel"]
 
-            dx += random.uniform(-0.25, 0.25)
-            dy += random.uniform(-0.25, 0.25)
+            # ── 1. smooth random acceleration (NOT jitter) ──
+            ax = random.uniform(-1, 1) * 0.000003
+            ay = random.uniform(-1, 1) * 0.000003
 
+            vx += ax
+            vy += ay
+
+            # ── 2. velocity damping (prevents chaos) ──
+            vx *= 0.96
+            vy *= 0.96
+
+            # ── 3. soft steering back to center (like GPS drift correction / walking area) ──
+            vx += (CENTER_LAT - lat) * 0.00001
+            vy += (CENTER_LON - lon) * 0.00001
+
+            # ── 4. update position ──
+            lat += vx
+            lon += vy
+
+            # ── 5. boundary clamp (soft containment) ──
+            if abs(lat - CENTER_LAT) > BOUND:
+                vx *= -0.6
+            if abs(lon - CENTER_LON) > BOUND:
+                vy *= -0.6
+
+            lat = max(min(lat, CENTER_LAT + BOUND), CENTER_LAT - BOUND)
+            lon = max(min(lon, CENTER_LON + BOUND), CENTER_LON - BOUND)
+
+            # ── save state ──
             s["pos"] = [lat, lon]
-            s["dir"] = [dx, dy]
+            s["vel"] = [vx, vy]
+
+            # ── realistic sensor simulation ──
+            phase = t * 0.3 + addr
 
             packet = {
                 "addr": addr,
@@ -100,22 +142,25 @@ def demo_injector():
                 "lat": lat,
                 "lon": lon,
                 "alt": 180,
-                "sat": 6,
-                "rssi": -60,
-                "snr": 10,
-                "ax": 0.2,
-                "ay": 0.1,
-                "az": 1.0,
-                "gx": 0,
-                "gy": 0,
-                "gz": 0,
+
+                "sat": 5 + random.randint(0, 3),
+
+                "rssi": -55 - int(abs(vx + vy) * 200000),
+                "snr":  12 - int(abs(vx + vy) * 80000),
+
+                "ax": 0.15 * math.sin(phase) + random.uniform(-0.05, 0.05),
+                "ay": 0.15 * math.cos(phase) + random.uniform(-0.05, 0.05),
+                "az": 1.0 + random.uniform(-0.02, 0.02),
+
+                "gx": 2 * math.sin(phase),
+                "gy": 2 * math.cos(phase),
+                "gz": random.uniform(-0.5, 0.5),
             }
 
             ingest(packet)
 
         t += 1
         time.sleep(1)
-
 
 # ─────────────────────────────
 # START THREAD (Render safe)
