@@ -130,15 +130,17 @@ def demo_injector():
 # ─────────────────────────────
 _started = False
 
-def start_demo():
+def ensure_demo_running():
     global _started
     if _started:
         return
     _started = True
     threading.Thread(target=demo_injector, daemon=True).start()
 
-start_demo()
 
+@app.before_request
+def _start_background():
+    ensure_demo_running()
 
 # ─────────────────────────────
 # API
